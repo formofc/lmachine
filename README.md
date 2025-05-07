@@ -7,7 +7,7 @@ Need lambda calculus in your project for some unholy reason? (Seriously, why?) `
 - **Single-header design** (inspired by [stb libraries](https://github.com/nothings/stb))  
 - **Reference-counted memory management** Not that bad, I promise
 - **Lazy evaluation** call-by-need strategy
-- **Primitive operations**: Arithmetic (`+`, `-`, `*`, `/`) and equality comparisons  
+- **Primitive operations**: Arithmetic (`+`, `-`, `*`, `/`) and comparisons (`>`, `<`, `==`)
 - **De Bruijn indices** for variable binding  
 - **"Standard library"** (opt-in via `LMACHINE_BASIC_UTILS`):  
   - Combinators: `S`, `K`, `I`, `Y`, `B`, `C`, `W`  

@@ -47,6 +47,7 @@
  *    `LMACHINE_FREE`               - custom memory free function (default: free)
  *    `LMACHINE_BASIC_UTILS`        - enables combinators (S,K,I,Y etc.) and boolean logic
  *    `LMACHINE_CACHED_BOOLEANS`    - caches true/false nodes globally. Safes a lot of perfomance, but adds 6 leaked nodes
+ *    `LMACHINE_STDIO`              - includes <stdio.h> and adds 2 new primitives: `LM_NODE_PRIMITIVE_PRINT_CHAR`, `LM_NODE_PRIMITIVE_GET_CHAR`
  *
  * Example:
  * ```c
@@ -137,7 +138,7 @@ enum lm_node_tag_t {
     LM_NODE_APPLICATION,   // f M
     LM_NODE_VARIABLE,      // x
     LM_NODE_VALUE,         // 69, 420, true, false
-    LM_NODE_PRIMITIVE,     // +, -, *, /
+    LM_NODE_PRIMITIVE,     // +, -, *, /, >, <, ==
     LM_NODE_THUNK,         // lazy evaluation
 };
 enum lm_node_primitive_t {
@@ -146,6 +147,12 @@ enum lm_node_primitive_t {
     LM_NODE_PRIMITIVE_MUL,
     LM_NODE_PRIMITIVE_DIV,
     LM_NODE_PRIMITIVE_EQ,
+    LM_NODE_PRIMITIVE_MORE,
+    LM_NODE_PRIMITIVE_LESS,
+#ifdef LMACHINE_STDIO // Not rlly in functional programming fashion, but built-in monads would be bloat
+    LM_NODE_PRIMITIVE_PRINT_CHAR,
+    LM_NODE_PRIMITIVE_GET_CHAR,
+#endif
 };
 
 typedef struct lm_node_t {
@@ -179,7 +186,7 @@ typedef struct lm_node_t {
             struct lm_node_t* args[_LMACHINE_PRIMITIVE_ARGS_COUNT];
         } primitive;
 
-        // LM_NODE_THUNK (lazy eval) <-{<-{<-(__!!~`! MUTABLE !`~!!__)->}->}->
+        // LM_NODE_THUNK (lazy eval) .{<-{@(__!!~`! MUTABLE !`~!!__)@}->}.
         struct {
             struct lm_node_t* value;
             int is_cached;
@@ -233,6 +240,14 @@ lm_node_t* lm_mk_value(lm_int val);
  */
 lm_node_t* lm_mk_boolean(int val);
 
+/**
+ * @brief Creates a new boolean node. Define `LMACHINE_CACHED_BOOLEANS` to cache this(+6 leaked nodes) 
+ * @param op Operand (+. -, *, /, <, >, ==, ...). See lm_node_primitive_t
+ * @param arg1 First argument
+ * @param arg2 Second argument
+ * @return New value node or copy of it self when `arg1` or `arg2` evaluate to non-value node (must be destroyed by caller)
+ */
+lm_node_t* lm_mk_primitive(enum lm_node_primitive_t op, lm_node_t* arg1, lm_node_t* arg2);
 /**
  * @brief Creates a copy of a node with reference counting
  * @param node Node to copy
@@ -306,13 +321,15 @@ lm_node_t* lm_mk_or();
  * @return New node containing NOT combinator
  */
 lm_node_t* lm_mk_not();
+
 #endif
 
 #ifdef LMACHINE_IMPLEMENTATION
-// size_t t = 0;
+#ifdef LMACHINE_STDIO
+#include <stdio.h>
+#endif
 // Not part of an API
 lm_node_t* _lm_allocate_node() {
-    // printf("%zu\n", t+=sizeof(lm_node_t));
     return (lm_node_t*)LMACHINE_ALLOC(sizeof(lm_node_t));
 }
 // lm_mk_... functions always have `DCO`
@@ -441,7 +458,36 @@ lm_node_t* _lm_eval_primitive(lm_node_t* node) {
     }
 
     switch (node->as.primitive.opcode) {
-        case LM_NODE_PRIMITIVE_EQ: {
+#ifdef LMACHINE_STDIO
+        case LM_NODE_PRIMITIVE_PRINT_CHAR: {
+            if (!args[0] ||
+                args[0]->tag != LM_NODE_VALUE) {
+
+                lm_destroy_node(args[0]);
+                lm_destroy_node(args[1]);
+
+                return node; // DCO
+            }
+            lm_int ch = args[0]->as.value;
+            
+            lm_destroy_node(args[0]);
+            lm_destroy_node(args[1]);
+
+            putchar(ch);
+
+            return node; // DCO
+        }
+        case LM_NODE_PRIMITIVE_GET_CHAR: {
+            lm_destroy_node(args[0]);
+            lm_destroy_node(args[1]);
+            lm_destroy_node(node);
+
+            return lm_mk_value((lm_int)getchar()); // DCO
+        }
+#endif
+        case LM_NODE_PRIMITIVE_EQ:
+        case LM_NODE_PRIMITIVE_MORE:
+        case LM_NODE_PRIMITIVE_LESS: {
             if (!args[0] || !args[1] || 
                 args[0]->tag != LM_NODE_VALUE ||
                 args[1]->tag != LM_NODE_VALUE) {
@@ -457,9 +503,18 @@ lm_node_t* _lm_eval_primitive(lm_node_t* node) {
             
             lm_destroy_node(args[0]);
             lm_destroy_node(args[1]);
+
+            int result;
+            switch (node->as.primitive.opcode) {
+                case LM_NODE_PRIMITIVE_EQ: result = a == b; break;
+                case LM_NODE_PRIMITIVE_MORE: result = a > b; break;
+                case LM_NODE_PRIMITIVE_LESS: result = a < b; break;
+                default: return node; // DCO
+            }
+            
             lm_destroy_node(node);
 
-            return lm_mk_boolean(a == b);
+            return lm_mk_boolean(result);
         }
 
         case LM_NODE_PRIMITIVE_ADD:

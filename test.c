@@ -4,6 +4,7 @@
 #define LMACHINE_IMPLEMENTATION
 #define LMACHINE_BASIC_UTILS
 #define LMACHINE_CACHED_BOOLEANS
+#define LMACHINE_STDIO
 
 long t = 0;
 void fr(void* ptr) {
@@ -48,7 +49,7 @@ lm_node_t* lm_mk_fibonacci() {
     // fib(n-1) + fib(n-2)
     lm_node_t* addition = lm_mk_primitive(LM_NODE_PRIMITIVE_ADD, fib_n_minus_1, fib_n_minus_2);
     
-    // Вложенный if-then-else
+    // if-then-else
     lm_node_t* inner_if = lm_mk_app(
         lm_mk_app(cond2, one),  // if n == 1 then 1
         addition             // else fib(n-1) + fib(n-2)
@@ -71,7 +72,6 @@ lm_node_t* lm_mk_fibonacci() {
     
     return fibonacci;
 }
-
 int main() {
     lm_node_t* fib = lm_mk_fibonacci();
     
@@ -87,7 +87,7 @@ int main() {
         lm_destroy_node(result);
     }
     lm_destroy_node(fib);
-    printf("not freed: %ld\n", t); // 0
+    printf("not freed: %ld\n", t); // 6
     // 313172070 total allocations for Fib(30). Weirdo
     return 0;
 }
