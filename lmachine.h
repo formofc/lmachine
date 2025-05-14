@@ -188,8 +188,7 @@ typedef struct lm_node_t {
 
         // LM_NODE_THUNK (lazy eval) .{<-{@(__!!~`! MUTABLE !`~!!__)@}->}.
         struct {
-            struct lm_node_t* value;
-            int is_cached;
+            struct lm_node_t* func;
         } thunk;
 
     } as;
@@ -401,15 +400,14 @@ lm_node_t* lm_mk_primitive(enum lm_node_primitive_t op, lm_node_t* arg1, lm_node
 lm_node_t* _lm_mk_thunk(lm_node_t* func) {
     lm_node_t* node = _lm_allocate_node();
     node->tag = LM_NODE_THUNK;
-    node->as.thunk.value = func;
-    node->as.thunk.is_cached = 0;
+    node->as.thunk.func = func;
     node->ref_count = 0;
     return node;
 }
 lm_node_t* lm_copy_node(lm_node_t* node) {
     if (!node) return NULL;
     
-    node->ref_count++;
+    ++node->ref_count;
     return node;
 }
 void lm_destroy_node(lm_node_t* node) {
@@ -431,12 +429,12 @@ void lm_destroy_node(lm_node_t* node) {
                 break;
                 
             case LM_NODE_PRIMITIVE:
-                for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; i++) {
+                for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) {
                     lm_destroy_node(node->as.primitive.args[i]);
                 }
                 break;
             case LM_NODE_THUNK:
-                lm_destroy_node(node->as.thunk.value);
+                lm_destroy_node(node->as.thunk.func);
                 break;
             default:
                 break;
@@ -451,7 +449,7 @@ void lm_destroy_node(lm_node_t* node) {
 lm_node_t* _lm_eval_primitive(lm_node_t* node) {
     lm_node_t* args[_LMACHINE_PRIMITIVE_ARGS_COUNT] = {NULL};
     
-    for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; i++) { // Compute all arguments
+    for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) { // Compute all arguments
         if (node->as.primitive.args[i]) {
             args[i] = lm_evaluate(lm_copy_node(node->as.primitive.args[i]));
         }
@@ -607,7 +605,7 @@ lm_node_t* _lm_substitute(lm_node_t* expr, long var_index, lm_node_t* value) {
         }
 
         case LM_NODE_THUNK: {
-            lm_node_t* val = lm_copy_node(expr->as.thunk.value);
+            lm_node_t* val = lm_copy_node(expr->as.thunk.func);
 
             lm_destroy_node(expr);
 
@@ -632,13 +630,13 @@ lm_node_t* lm_evaluate(lm_node_t* node) {
             lm_node_t* func = lm_evaluate(lm_copy_node(node->as.application.func));
 
             lm_node_t* arg;
-            if (node->as.application.arg->tag == LM_NODE_THUNK) {
+            if (node->as.application.arg->tag == LM_NODE_THUNK) { // avoid nested thunks
                 arg = lm_copy_node(node->as.application.arg);
             } else {
                 arg = _lm_mk_thunk(lm_copy_node(node->as.application.arg));
             }
 
-            
+            // if func its abstraction(new lambda) -> replace all variables with arg
             if (func->tag == LM_NODE_ABSTRACTION) {
                 lm_node_t* result = _lm_substitute(
                     lm_copy_node(func->as.abstraction.body),
@@ -671,16 +669,32 @@ lm_node_t* lm_evaluate(lm_node_t* node) {
 
         case LM_NODE_THUNK: {
             lm_node_t* result;
-            if (node->as.thunk.is_cached) {
-                result = lm_copy_node(node->as.thunk.value);
-            } else { // DONT TOUCH - memory leak
-                // result = lm_evaluate(lm_copy_node(node->as.thunk.value)); <- INCORRECT
-                // No need to copy, at all. Dont touch this. NEVER
-                result = lm_evaluate(node->as.thunk.value); // no memory leaks.
-                node->as.thunk.value = lm_copy_node(result);
-                node->as.thunk.is_cached = 1;
+            if (node->ref_count == 0) { // DONT TOUCH. `node->as.thunk.value` can NOT refer to `node`
+                result = lm_evaluate(lm_copy_node(node->as.thunk.func));
+                lm_destroy_node(node);
+                *node = *result;
+                
+
+                /* V1
+                 * ```
+                 * result = lm_evaluate(node->as.thunk.value);
+                 * node->as.thunk.value = lm_copy_node(result);
+                 * node->as.thunk.is_cached = 1;
+                 * lm_destroy_node(node);
+                 * ```
+                 *
+                 * V2
+                 * ```
+                 * result = lm_evaluate(lm_copy_node(node->as.thunk.func));
+                 * lm_destroy_node(node);
+                 * *node = *result;
+                 * 
+                 * ```
+                 */ 
+            } else { // thunks have access to context depended bindings
+                result = lm_evaluate(lm_copy_node(node->as.thunk.func));
+                lm_destroy_node(node);
             }
-            lm_destroy_node(node);
 
             return result;
         }

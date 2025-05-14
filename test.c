@@ -75,7 +75,7 @@ lm_node_t* lm_mk_fibonacci() {
 int main() {
     lm_node_t* fib = lm_mk_fibonacci();
     
-    for (int i = 0; i <= 20; i++) {
+    for (int i = 0; i <= 20; ++i) {
         lm_node_t* result = lm_evaluate(
             lm_mk_app(
                 lm_copy_node(fib),
@@ -88,6 +88,6 @@ int main() {
     }
     lm_destroy_node(fib);
     printf("not freed: %ld\n", t); // 6
-    // 313172070 total allocations for Fib(30). Weirdo
+    // 313172070 total allocations for Fib(31). Weirdo
     return 0;
 }
