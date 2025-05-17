@@ -483,8 +483,6 @@ lm_node_t* _lm_eval_primitive(lm_node_t* node) {
                 lm_destroy_node(args[0]);
                 lm_destroy_node(args[1]);
 
-                printf("%d %d\n", args[0]->as.variable, args[1]->as.variable);
-
                 return node; // DCO
             }
 
@@ -626,7 +624,7 @@ lm_node_t* lm_evaluate(lm_node_t* node) {
             // if func its abstraction(new lambda) -> replace all variables with arg
             lm_node_t* arg;
             if (func->tag == LM_NODE_ABSTRACTION) {
-                if (node->as.application.arg->tag == LM_NODE_THUNK || node->as.application.arg->tag == LM_NODE_VALUE) { // Avoid nested thunks and thunked integers
+                if (node->as.application.arg->tag == LM_NODE_THUNK || node->as.application.arg->tag == LM_NODE_VALUE || node->as.application.arg->tag == LM_NODE_VARIABLE) { // Avoid nested thunks, variables, and thunked integers
                     arg = lm_copy_node(node->as.application.arg);
                 } else {
                     arg = _lm_mk_thunk(lm_copy_node(node->as.application.arg));
