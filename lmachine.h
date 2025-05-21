@@ -451,23 +451,24 @@ lm_node_t* _lm_eval_primitive(lm_node_t* node) {
             if (!args[0] ||
                 args[0]->tag != LM_NODE_VALUE) {
 
-                lm_destroy_node(args[0]);
-                lm_destroy_node(args[1]);
+                for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) lm_destroy_node(args[i]);
 
                 return node; // DCO
             }
             lm_int ch = args[0]->as.value;
+
+            lm_node_t* result = lm_copy_node(args[1]);
             
-            lm_destroy_node(args[0]);
-            lm_destroy_node(args[1]);
+            for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) lm_destroy_node(args[i]);
+
+            lm_destroy_node(node);
 
             putchar(ch);
 
-            return node; // DCO
+            return result; // DCO
         }
         case LM_NODE_PRIMITIVE_GET_CHAR: {
-            lm_destroy_node(args[0]);
-            lm_destroy_node(args[1]);
+             for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) lm_destroy_node(args[i]);
             lm_destroy_node(node);
 
             return lm_mk_value((lm_int)getchar()); // DCO
@@ -480,8 +481,7 @@ lm_node_t* _lm_eval_primitive(lm_node_t* node) {
                 args[0]->tag != LM_NODE_VALUE ||
                 args[1]->tag != LM_NODE_VALUE) {
 
-                lm_destroy_node(args[0]);
-                lm_destroy_node(args[1]);
+                for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) lm_destroy_node(args[i]);
 
                 return node; // DCO
             }
@@ -489,8 +489,7 @@ lm_node_t* _lm_eval_primitive(lm_node_t* node) {
             lm_int a = args[0]->as.value;
             lm_int b = args[1]->as.value;
             
-            lm_destroy_node(args[0]);
-            lm_destroy_node(args[1]);
+            for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) lm_destroy_node(args[i]);
 
             int result;
             switch (node->as.primitive.opcode) {
@@ -512,16 +511,14 @@ lm_node_t* _lm_eval_primitive(lm_node_t* node) {
                 args[0]->tag != LM_NODE_VALUE ||
                 args[1]->tag != LM_NODE_VALUE) {
 
-                lm_destroy_node(args[0]);
-                lm_destroy_node(args[1]);
+                for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) lm_destroy_node(args[i]);
 
                 return node; // DCO
             }
             lm_int a = args[0]->as.value;
             lm_int b = args[1]->as.value;
 
-            lm_destroy_node(args[0]);
-            lm_destroy_node(args[1]);
+            for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) lm_destroy_node(args[i]);
             
             lm_int result;
             switch (node->as.primitive.opcode) {
@@ -544,7 +541,7 @@ lm_node_t* _lm_eval_primitive(lm_node_t* node) {
 
 lm_node_t* _lm_substitute(lm_node_t* expr, long var_index, lm_node_t* value) {
     if (!expr) return NULL;
-    
+
     switch (expr->tag) {
         case LM_NODE_VARIABLE:
             if (expr->as.variable == var_index) {
@@ -563,6 +560,10 @@ lm_node_t* _lm_substitute(lm_node_t* expr, long var_index, lm_node_t* value) {
             }
 
             lm_node_t* new_body = _lm_substitute(lm_copy_node(expr->as.abstraction.body), var_index, value); // DCO
+            if (expr->as.abstraction.body == new_body) { // Not changed
+                lm_destroy_node(new_body);
+                return expr; // DCO
+            }
             lm_node_t* new_node = lm_mk_abs(expr->as.abstraction.var_index, new_body); // DCO
 
             lm_destroy_node(expr);
@@ -573,6 +574,11 @@ lm_node_t* _lm_substitute(lm_node_t* expr, long var_index, lm_node_t* value) {
         case LM_NODE_APPLICATION: {
             lm_node_t* new_func = _lm_substitute(lm_copy_node(expr->as.application.func), var_index, lm_copy_node(value));
             lm_node_t* new_arg = _lm_substitute(lm_copy_node(expr->as.application.arg), var_index, value); // DCO. last usage
+            if (expr->as.application.func == new_func && expr->as.application.arg == new_arg) { // Not changed
+                lm_destroy_node(new_func);
+                lm_destroy_node(new_arg);
+                return expr; // DCO
+            }
 
             lm_node_t* new_node = lm_mk_app(new_func, new_arg); // DCO. last usage
             lm_destroy_node(expr);
@@ -582,24 +588,40 @@ lm_node_t* _lm_substitute(lm_node_t* expr, long var_index, lm_node_t* value) {
             
         case LM_NODE_PRIMITIVE: {
             lm_node_t* args[_LMACHINE_PRIMITIVE_ARGS_COUNT] = {NULL};
+            int not_changed = 1;
             for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) {
                 if (expr->as.primitive.args[i]) {
                     args[i] = _lm_substitute(lm_copy_node(expr->as.primitive.args[i]), var_index, lm_copy_node(value));
+                    not_changed = not_changed && (args[i] == expr->as.primitive.args[i]);
                 }
             }
+            lm_destroy_node(value);
+
+            if (not_changed) {
+                for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) lm_destroy_node(args[i]);
+                return expr; // DCO. Not changed
+            }
+
             enum lm_node_primitive_t opcode = expr->as.primitive.opcode;
             lm_destroy_node(expr);
-            lm_destroy_node(value);
 
             return lm_mk_primitive(opcode, args[0], args[1]); // DCO. last usage
         }
 
         case LM_NODE_THUNK: {
-            lm_node_t* val = lm_copy_node(expr->as.thunk);
+            // return expr;
+            lm_node_t* new_thunk = _lm_substitute(lm_copy_node(expr->as.thunk), var_index, value); // DCO
+
+            if (expr->as.thunk == new_thunk) {
+                lm_destroy_node(new_thunk);
+                return expr; // DCO. Not changed
+            }
+
+            // Rarely reacheble
 
             lm_destroy_node(expr);
 
-            return _lm_mk_thunk(_lm_substitute(val, var_index, value)); // DCO.
+            return _lm_mk_thunk(new_thunk); // DCO.
         }
             
         default:
@@ -610,9 +632,8 @@ lm_node_t* _lm_substitute(lm_node_t* expr, long var_index, lm_node_t* value) {
 lm_node_t* lm_evaluate(lm_node_t* node) {
     if (!node) return NULL;
     
-    
     switch (node->tag) {
-        case LM_NODE_ABSTRACTION: 
+        case LM_NODE_ABSTRACTION: // Normal form
         case LM_NODE_VALUE:
         case LM_NODE_VARIABLE:
         default:
@@ -621,13 +642,13 @@ lm_node_t* lm_evaluate(lm_node_t* node) {
         case LM_NODE_APPLICATION: {
             lm_node_t* func = lm_evaluate(lm_copy_node(node->as.application.func));
             
-            // if func its abstraction(new lambda) -> replace all variables with arg
+            // if func its abstraction(new lambda) -> replace all variables in body with arg
             lm_node_t* arg;
             if (func->tag == LM_NODE_ABSTRACTION) {
-                if (node->as.application.arg->tag == LM_NODE_THUNK || node->as.application.arg->tag == LM_NODE_VALUE || node->as.application.arg->tag == LM_NODE_VARIABLE) { // Avoid nested thunks, variables, and thunked integers
-                    arg = lm_copy_node(node->as.application.arg);
-                } else {
+                if (node->as.application.arg->tag == LM_NODE_APPLICATION || node->as.application.arg->tag == LM_NODE_PRIMITIVE) { 
                     arg = _lm_mk_thunk(lm_copy_node(node->as.application.arg));
+                } else { // No need to create a thunk for node in normal form
+                    arg = lm_copy_node(node->as.application.arg);
                 }
 
                 lm_node_t* result = _lm_substitute(
