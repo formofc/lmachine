@@ -44,6 +44,7 @@
  * #define these before including to override defaults
  *
  *    `LMACHINE_ALLOC`              - custom memory allocation function (default: malloc)
+ *    `LMACHINE_STRICT`             - allow to use strict application via lm_mk_stric_app
  *    `LMACHINE_FREE`               - custom memory free function (default: free)
  *    `LMACHINE_BASIC_UTILS`        - enables combinators (S,K,I,Y etc.) and boolean logic
  *    `LMACHINE_CACHED_BOOLEANS`    - caches true/false nodes globally. Safes a lot of perfomance, but adds 6 leaked nodes
@@ -134,12 +135,15 @@
 
 typedef long long lm_int;
 enum lm_node_tag_t {
-    LM_NODE_ABSTRACTION,   // λx.M
-    LM_NODE_APPLICATION,   // f M
-    LM_NODE_VARIABLE,      // x
-    LM_NODE_VALUE,         // 69, 420, true, false
-    LM_NODE_PRIMITIVE,     // +, -, *, /, >, <, ==
-    LM_NODE_THUNK,         // lazy evaluation
+    LM_NODE_ABSTRACTION,        // λx.M
+    LM_NODE_APPLICATION,        // (f M)
+#ifdef LMACHINE_STRICT
+    LM_NODE_STRICT_APPLICATION, // (f M)
+#endif
+    LM_NODE_VARIABLE,           // x
+    LM_NODE_VALUE,              // 69, 420, true, false
+    LM_NODE_PRIMITIVE,          // +, -, *, /, >, <, ==
+    LM_NODE_THUNK,              // lazy evaluation
 };
 enum lm_node_primitive_t {
     LM_NODE_PRIMITIVE_ADD,
@@ -162,10 +166,10 @@ typedef struct lm_node_t {
         // LM_NODE_ABSTRACTION
         struct {
             long var_index;         // 1, 2, 3 ...
-            struct lm_node_t* body;    // body
+            struct lm_node_t* body; // body
         } abstraction;
 
-        // LM_NODE_APPLICATION
+        // LM_NODE_APPLICATION/LM_NODE_STRICT_APPLICATION
         struct {
             struct lm_node_t* func;  // f
             struct lm_node_t* arg;   // N
@@ -219,6 +223,14 @@ lm_node_t* lm_mk_var(long index);
  * @return New application node (must be destroyed by caller)
  */
 lm_node_t* lm_mk_app(lm_node_t* func, lm_node_t* arg);
+
+/**
+ * @brief Creates a new application node
+ * @param func Function expression
+ * @param arg Argument expression
+ * @return New application node (must be destroyed by caller)
+ */
+lm_node_t* lm_mk_strict_app(lm_node_t* func, lm_node_t* arg);
 
 /**
  * @brief Creates a new value node (integer)
@@ -350,6 +362,16 @@ lm_node_t* lm_mk_app(lm_node_t* func, lm_node_t* arg) {
     node->ref_count = 0;
     return node;
 }
+#ifdef LMACHINE_STRICT
+lm_node_t* lm_mk_strict_app(lm_node_t* func, lm_node_t* arg) {
+    lm_node_t* node = _lm_allocate_node();
+    node->tag = LM_NODE_STRICT_APPLICATION;
+    node->as.application.func = func;
+    node->as.application.arg = arg;
+    node->ref_count = 0;
+    return node;
+}
+#endif
 lm_node_t* lm_mk_value(lm_int val) {
     lm_node_t* node = _lm_allocate_node();
     node->tag = LM_NODE_VALUE;
@@ -412,7 +434,9 @@ void lm_destroy_node(lm_node_t* node) {
             case LM_NODE_ABSTRACTION:
                 lm_destroy_node(node->as.abstraction.body);
                 break;
-                
+#ifdef LMACHINE_STRICT 
+            case LM_NODE_STRICT_APPLICATION:
+#endif
             case LM_NODE_APPLICATION:
                 lm_destroy_node(node->as.application.func);
                 lm_destroy_node(node->as.application.arg);
@@ -570,7 +594,9 @@ lm_node_t* _lm_substitute(lm_node_t* expr, long var_index, lm_node_t* value) {
 
             return new_node; // DCO
         }
-            
+#ifdef LMACHINE_STRICT 
+        case LM_NODE_STRICT_APPLICATION:
+#endif
         case LM_NODE_APPLICATION: {
             lm_node_t* new_func = _lm_substitute(lm_copy_node(expr->as.application.func), var_index, lm_copy_node(value));
             lm_node_t* new_arg = _lm_substitute(lm_copy_node(expr->as.application.arg), var_index, value); // DCO. last usage
@@ -638,13 +664,20 @@ lm_node_t* lm_evaluate(lm_node_t* node) {
         case LM_NODE_VARIABLE:
         default:
             return node; // DCO
-            
+#ifdef LMACHIME_STRICT
+        case LM_NODE_STRICT_APPLICATION:
+#endif
         case LM_NODE_APPLICATION: {
             lm_node_t* func = lm_evaluate(lm_copy_node(node->as.application.func));
             
             // if func its abstraction(new lambda) -> replace all variables in body with arg
             lm_node_t* arg;
             if (func->tag == LM_NODE_ABSTRACTION) {
+#ifdef LMACHIME_STRICT
+                if (node->tag == LM_NODE_STRICT_APPLICATION) {
+                    arg = lm_evaluate(lm_copy_node(node->as.application.arg));
+                } else
+#endif
                 if (node->as.application.arg->tag == LM_NODE_APPLICATION || node->as.application.arg->tag == LM_NODE_PRIMITIVE) { 
                     arg = _lm_mk_thunk(lm_copy_node(node->as.application.arg));
                 } else { // No need to create a thunk for node in normal form

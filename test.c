@@ -3,6 +3,7 @@
 
 #define LMACHINE_IMPLEMENTATION
 #define LMACHINE_BASIC_UTILS
+#define LMACHINE_STRICT
 #define LMACHINE_CACHED_BOOLEANS
 #define LMACHINE_STDIO
 
@@ -54,9 +55,10 @@ lm_node_t* lm_mk_fibonacci() {
         lm_mk_app(cond2, one),  // if n == 1 then 1
         addition             // else fib(n-1) + fib(n-2)
     );
-    
+
+    // strict application only for testing
     lm_node_t* outer_if = lm_mk_app(
-        lm_mk_app(cond1, zero), // if n == 0 then 0
+        lm_mk_strict_app(cond1, zero), // if n == 0 then 0
         inner_if            // else (if n == 1 then 1 else ...)
     );
     
@@ -75,7 +77,7 @@ lm_node_t* lm_mk_fibonacci() {
 int main() {
     lm_node_t* fib = lm_mk_fibonacci();
     
-    for (int i = 0; i <= 20; ++i) {
+   for (int i = 0; i <= 20; ++i) {
         lm_node_t* result = lm_evaluate(
             lm_mk_app(
                 lm_copy_node(fib),
@@ -88,6 +90,6 @@ int main() {
     }
     lm_destroy_node(fib);
     printf("not freed: %ld\n", t); // 6
-    // 313172070 total allocations for Fib(31). Weirdo
+
     return 0;
 }
