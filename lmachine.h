@@ -150,6 +150,7 @@ enum lm_node_primitive_t {
     LM_NODE_PRIMITIVE_SUB,
     LM_NODE_PRIMITIVE_MUL,
     LM_NODE_PRIMITIVE_DIV,
+    LM_NODE_PRIMITIVE_MOD,
     LM_NODE_PRIMITIVE_EQ,
     LM_NODE_PRIMITIVE_MORE,
     LM_NODE_PRIMITIVE_LESS,
@@ -530,7 +531,8 @@ lm_node_t* _lm_eval_primitive(lm_node_t* node) {
         case LM_NODE_PRIMITIVE_ADD:
         case LM_NODE_PRIMITIVE_SUB:
         case LM_NODE_PRIMITIVE_MUL:
-        case LM_NODE_PRIMITIVE_DIV: {
+        case LM_NODE_PRIMITIVE_DIV:
+        case LM_NODE_PRIMITIVE_MOD: {
             if (!args[0] || !args[1] || 
                 args[0]->tag != LM_NODE_VALUE ||
                 args[1]->tag != LM_NODE_VALUE) {
@@ -550,6 +552,7 @@ lm_node_t* _lm_eval_primitive(lm_node_t* node) {
                 case LM_NODE_PRIMITIVE_SUB: result = a - b; break;
                 case LM_NODE_PRIMITIVE_MUL: result = a * b; break;
                 case LM_NODE_PRIMITIVE_DIV: result = (b != 0) ? a / b : 0; break;
+                case LM_NODE_PRIMITIVE_MOD: result = (b != 0) ? a % b : 0; break;
                 default: return node; // DCO
             }
             
