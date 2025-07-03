@@ -133,8 +133,21 @@
 #endif
 #define _LMACHINE_PRIMITIVE_ARGS_COUNT 2
 
+#if !defined(LM_ALIGNOF)
+    #if defined(__GNUC__) || defined(__clang__)
+        #define LM_ALIGNOF(type) __alignof__(type)
+    #elif defined(_MSC_VER)
+        #define LM_ALIGNOF(type) __alignof(type)
+    #else // Not very accurate on some machines
+        #define LM_ALIGNOF(type) sizeof(struct { char c; type x; }) - sizeof(type)
+    #endif
+#endif
+
+typedef char lm_bool;
 typedef long long lm_int;
-enum lm_node_tag_t {
+typedef unsigned long long lm_size_t;
+
+typedef enum {
     LM_NODE_ABSTRACTION,        // λx.M
     LM_NODE_APPLICATION,        // (f M)
 #ifdef LMACHINE_STRICT
@@ -144,8 +157,9 @@ enum lm_node_tag_t {
     LM_NODE_VALUE,              // 69, 420, true, false
     LM_NODE_PRIMITIVE,          // +, -, *, /, >, <, ==
     LM_NODE_THUNK,              // lazy evaluation
-};
-enum lm_node_primitive_t {
+} lm_node_tag_t;
+
+typedef enum {
     LM_NODE_PRIMITIVE_ADD,
     LM_NODE_PRIMITIVE_SUB,
     LM_NODE_PRIMITIVE_MUL,
@@ -158,15 +172,15 @@ enum lm_node_primitive_t {
     LM_NODE_PRIMITIVE_PRINT_CHAR,
     LM_NODE_PRIMITIVE_GET_CHAR,
 #endif
-};
+} lm_node_primitive_t;
 
 typedef struct lm_node_t {
-    enum lm_node_tag_t tag;
-    int ref_count;
+    lm_node_tag_t tag;
+    lm_size_t ref_count;
     union {
         // LM_NODE_ABSTRACTION
         struct {
-            long var_index;         // 1, 2, 3 ...
+            lm_size_t var_index;         // 1, 2, 3 ...
             struct lm_node_t* body; // body
         } abstraction;
 
@@ -177,22 +191,34 @@ typedef struct lm_node_t {
         } application;
 
         // LM_NODE_VARIABLE (x)
-        long variable;
+        lm_size_t variable;
 
         // LM_NODE_VALUE
         lm_int value;
 
-        // LM_NODE_PRIMITIVE (+, -, /, *, ...)
+        // LM_NODE_PRIMITIVE (+, -, /, *, %, ...)
         struct {
-            enum lm_node_primitive_t opcode; 
+            lm_node_primitive_t opcode; 
             struct lm_node_t* args[_LMACHINE_PRIMITIVE_ARGS_COUNT];
         } primitive;
 
-        // LM_NODE_THUNK (lazy eval) .{<-{@(__!!~`! MUTABLE !`~!!__)@}->}.
+        // LM_NODE_THUNK (lazy eval)
         struct lm_node_t* thunk;
 
     } as;
 } lm_node_t;
+
+typedef struct lm_node_cache_kv_t {
+    lm_node_t* key;
+    lm_node_t* value;
+} lm_node_cache_kv_t;
+
+typedef struct lm_node_cache_t {
+    lm_node_cache_kv_t* data;
+    lm_size_t capacity;
+    lm_size_t current;
+    lm_size_t depth;
+} lm_node_cache_t;
 
 // API
 /**
@@ -203,19 +229,59 @@ typedef struct lm_node_t {
 lm_node_t* lm_evaluate(lm_node_t* node);
 
 /**
+ * @brief Evaluates a lambda calculus expression to normal form and safe result to the cache
+ * @param node The expression to evaluate
+ * @param cache The structure which contains cache. Can be NULL
+ * @return New node containing the evaluated result (must be destroyed by caller)
+ */
+lm_node_t* lm_evaluate_cache(lm_node_t* node, lm_node_cache_t* cache);
+
+/**
+ * @brief Initialize lm_node_cache_t structure with provided memory region
+ * @param out Shouldn't be NULL
+ * @param data_pointer pointer to valid memory region. Must be aligned
+ * @param count The size of memory region in bytes 
+ * @return Successful or not
+ */
+lm_bool lm_init_node_cache(lm_node_cache_t* out, void* data_pointer, lm_size_t count, lm_size_t depth);
+
+/**
+ * @brief Return value under the key in cache
+ * @param cache The cache structure. Must be successfuly initialized
+ * @key The valid node
+ * @return If value under key doesn't exit return NULL. Return copied node otherwise
+ */
+lm_node_t* lm_try_get_cache(lm_node_cache_t* cache, lm_node_t* key);
+
+/**
+ * @brief Trying cache value
+ * @param cache The cache structure. Must be successfuly initialized
+ * @param key The valid node
+ * @param value The valid node
+ * @return Success or not 
+ */
+lm_bool lm_try_cache(lm_node_cache_t* cache, lm_node_t* key, lm_node_t* value);
+
+/**
+ * @brief Destroy the cache
+ * @param cache Cache to destroy. Didn't free memory. Just destroy inner keys and values
+ */
+void lm_destroy_node_cache(lm_node_cache_t* cache);
+
+/**
  * @brief Creates a new lambda abstraction node
  * @param var_index De Bruijn index of the bound variable
  * @param body Body of the abstraction
  * @return New abstraction node (must be destroyed by caller)
  */
-lm_node_t* lm_mk_abs(long var_index, lm_node_t* body);
+lm_node_t* lm_mk_abs(lm_size_t var_index, lm_node_t* body);
 
 /**
  * @brief Creates a new variable node
  * @param index De Bruijn index of the variable
  * @return New variable node (must be destroyed by caller)
  */
-lm_node_t* lm_mk_var(long index);
+lm_node_t* lm_mk_var(lm_size_t index);
 
 /**
  * @brief Creates a new application node
@@ -245,7 +311,7 @@ lm_node_t* lm_mk_value(lm_int val);
  * @param val Boolean value (0 = false, nonzero = true)
  * @return New boolean node (must be destroyed by caller)
  */
-lm_node_t* lm_mk_boolean(int val);
+lm_node_t* lm_mk_boolean(lm_bool val);
 
 /**
  * @brief Creates a new boolean node. Define `LMACHINE_CACHED_BOOLEANS` to cache this(+6 leaked nodes) 
@@ -254,7 +320,7 @@ lm_node_t* lm_mk_boolean(int val);
  * @param arg2 Second argument
  * @return New value node or copy of it self when `arg1` or `arg2` evaluate to non-value node (must be destroyed by caller)
  */
-lm_node_t* lm_mk_primitive(enum lm_node_primitive_t op, lm_node_t* arg1, lm_node_t* arg2);
+lm_node_t* lm_mk_primitive(lm_node_primitive_t op, lm_node_t* arg1, lm_node_t* arg2);
 /**
  * @brief Creates a copy of a node with reference counting
  * @param node Node to copy
@@ -335,19 +401,160 @@ lm_node_t* lm_mk_not();
 #ifdef LMACHINE_STDIO
 #include <stdio.h>
 #endif
+
+// No normilization
+// Ingnore basic rules for argument passing(have no sense)
+lm_bool _lm_node_cmp_ignore_dc(lm_node_t* node1, lm_node_t* node2, lm_size_t cmp_depth) {
+    if (cmp_depth == 0) return 0;
+
+    if (node1 == node2) return 1;
+
+    if (!node1 || !node2) return 0;
+    if (node1->tag != node2->tag) return 0;
+
+    switch (node1->tag) {
+        case LM_NODE_VARIABLE: {
+            return node1->as.variable == node2->as.variable;
+        }
+        case LM_NODE_VALUE: {
+            return node1->as.value == node2->as.value;
+        }
+        case LM_NODE_ABSTRACTION: {
+            return 
+                node1->as.abstraction.var_index == node2->as.abstraction.var_index &&
+                _lm_node_cmp_ignore_dc(node1->as.abstraction.body, node2->as.abstraction.body, cmp_depth - 1);
+        }
+        case LM_NODE_THUNK: {
+            return 
+                _lm_node_cmp_ignore_dc(node1->as.thunk, node2->as.thunk, cmp_depth - 1);
+        }
+#ifdef LMACHINE_STRICT
+        case LM_NODE_STRICT_APPLICATION:
+#endif
+        case LM_NODE_APPLICATION: {
+            return 
+                _lm_node_cmp_ignore_dc(node1->as.application.func, node2->as.application.func, cmp_depth - 1) &&
+                _lm_node_cmp_ignore_dc(node1->as.application.arg, node2->as.application.arg, cmp_depth - 1);
+        }
+        case LM_NODE_PRIMITIVE: {
+            if (node1->as.primitive.opcode != node2->as.primitive.opcode) return 0;
+
+            for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) {
+                if (!_lm_node_cmp_ignore_dc(node1->as.primitive.args[i], node2->as.primitive.args[i], cmp_depth)) return 0;
+            }
+
+            return 1;
+        }
+
+        default: return 0;
+    }
+
+}
+
+// Reinventing. yep
+void _lm_memzero(void* vdata, lm_size_t count) {
+    if (!count) return;
+    char* data = (char*)vdata;
+    char* end = (char*)((lm_size_t)data + count);
+
+    while (data != end && (lm_size_t)data % sizeof(lm_size_t) != 0) {
+        *data = 0;
+        ++data;
+    }
+    while (data != end && ((lm_size_t)end - (lm_size_t)data) >= sizeof(lm_size_t)) {
+        *((lm_size_t*)data) = 0;
+        data += sizeof(lm_size_t);
+    }
+    while (data != end) {
+        *data = 0;
+        ++data;
+    }
+}
+
 // Not part of an API
 lm_node_t* _lm_allocate_node() {
     return (lm_node_t*)LMACHINE_ALLOC(sizeof(lm_node_t));
 }
+
+lm_bool lm_init_node_cache(lm_node_cache_t* out, void* data_pointer, lm_size_t count, lm_size_t depth) {
+    if (!out || !data_pointer) return 0;
+    if (count < sizeof(*out->data)) return 0;
+    if ((lm_size_t)data_pointer % LM_ALIGNOF(lm_node_cache_kv_t) != 0) return 0;
+    
+    _lm_memzero(data_pointer, count);
+
+    out->capacity = (count - (sizeof(*out->data) - 1)) / sizeof(*out->data);
+    out->data = data_pointer;
+    out->current = 0;
+    out->depth = depth;
+
+    return 1;
+}
+
+lm_node_t* _lm_try_get_cache_no_copy(lm_node_cache_t* cache, lm_node_t* key) {
+    if (!cache || !key || cache->capacity == 0) {
+        lm_destroy_node(key);
+
+        return 0;
+    }
+
+    for (lm_size_t i = 0; i < cache->capacity; ++i) {
+        // if (cache->data[i].key == key) {
+        if (_lm_node_cmp_ignore_dc(cache->data[i].key, key, cache->depth)) {
+            lm_destroy_node(key);
+            return cache->data[i].value;
+        }
+    }
+    lm_destroy_node(key);
+
+    return 0;
+}
+
+lm_node_t* lm_try_get_cache(lm_node_cache_t* cache, lm_node_t* key) {
+    return lm_copy_node(_lm_try_get_cache_no_copy(cache, key));
+}
+
+lm_bool lm_try_cache(lm_node_cache_t* cache, lm_node_t* key, lm_node_t* value) {
+    if (!cache || !key || !value ||
+        cache->capacity == 0) {
+        lm_destroy_node(key);
+        lm_destroy_node(value);
+        return 0;
+    }
+
+    // Even if is 0, its ok
+    lm_destroy_node(cache->data[cache->current].key);
+    lm_destroy_node(cache->data[cache->current].value);
+
+    cache->data[cache->current].key = key;
+    cache->data[cache->current].value = value;
+
+    ++cache->current; // Looping
+    if (cache->current >= cache->capacity) {
+        cache->current = 0;
+    }
+
+    return 1;
+}
+
+void lm_destroy_node_cache(lm_node_cache_t* cache) {
+    if (!cache) return;
+
+    for (lm_size_t i = 0; i < cache->capacity; ++i) { // If key or value == 0 lm_destroy_node just early return 
+        lm_destroy_node(cache->data[i].key);
+        lm_destroy_node(cache->data[i].value);
+    }
+}
+
 // lm_mk_... functions always have `DCO`
-lm_node_t* lm_mk_var(long index) {
+lm_node_t* lm_mk_var(lm_size_t index) {
     lm_node_t* node = _lm_allocate_node();
     node->tag = LM_NODE_VARIABLE;
     node->as.variable = index;
     node->ref_count = 0;
     return node;
 }
-lm_node_t* lm_mk_abs(long var_index, lm_node_t* body) {
+lm_node_t* lm_mk_abs(lm_size_t var_index, lm_node_t* body) {
     lm_node_t* node = _lm_allocate_node();
     node->tag = LM_NODE_ABSTRACTION;
     node->as.abstraction.var_index = var_index;
@@ -384,7 +591,7 @@ lm_node_t* lm_mk_value(lm_int val) {
 #ifdef LMACHINE_CACHED_BOOLEANS
 static lm_node_t* __lm_true_node = NULL;
 static lm_node_t* __lm_false_node = NULL;
-lm_node_t* lm_mk_boolean(int val) {
+lm_node_t* lm_mk_boolean(lm_bool val) {
     if (val) {
         if (!__lm_true_node)
             __lm_true_node = lm_mk_abs(0, lm_mk_abs(1, lm_mk_var(0))); // True
@@ -396,7 +603,7 @@ lm_node_t* lm_mk_boolean(int val) {
     }
 }
 #else
-lm_node_t* lm_mk_boolean(int val) {
+lm_node_t* lm_mk_boolean(lm_bool val) {
     if (val) {
         return lm_mk_abs(0, lm_mk_abs(1, lm_mk_var(0))); // True
     } else {
@@ -404,7 +611,7 @@ lm_node_t* lm_mk_boolean(int val) {
     }
 }
 #endif
-lm_node_t* lm_mk_primitive(enum lm_node_primitive_t op, lm_node_t* arg1, lm_node_t* arg2) {
+lm_node_t* lm_mk_primitive(lm_node_primitive_t op, lm_node_t* arg1, lm_node_t* arg2) {
     lm_node_t* node = _lm_allocate_node();
     node->tag = LM_NODE_PRIMITIVE;
     node->as.primitive.opcode = op;
@@ -461,12 +668,12 @@ void lm_destroy_node(lm_node_t* node) {
         --node->ref_count;
     }
 }
-lm_node_t* _lm_eval_primitive(lm_node_t* node) {
+lm_node_t* _lm_eval_primitive(lm_node_t* node, lm_node_cache_t* cache) {
     lm_node_t* args[_LMACHINE_PRIMITIVE_ARGS_COUNT] = {NULL};
     
     for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) { // Compute all arguments
         if (node->as.primitive.args[i]) {
-            args[i] = lm_evaluate(lm_copy_node(node->as.primitive.args[i]));
+            args[i] = lm_evaluate_cache(lm_copy_node(node->as.primitive.args[i]), cache);
         }
     }
 
@@ -516,7 +723,7 @@ lm_node_t* _lm_eval_primitive(lm_node_t* node) {
             
             for (int i = 0; i < _LMACHINE_PRIMITIVE_ARGS_COUNT; ++i) lm_destroy_node(args[i]);
 
-            int result;
+            lm_bool result;
             switch (node->as.primitive.opcode) {
                 case LM_NODE_PRIMITIVE_EQ: result = a == b; break;
                 case LM_NODE_PRIMITIVE_MORE: result = a > b; break;
@@ -631,7 +838,7 @@ lm_node_t* _lm_substitute(lm_node_t* expr, long var_index, lm_node_t* value) {
                 return expr; // DCO. Not changed
             }
 
-            enum lm_node_primitive_t opcode = expr->as.primitive.opcode;
+            lm_node_primitive_t opcode = expr->as.primitive.opcode;
             lm_destroy_node(expr);
 
             return lm_mk_primitive(opcode, args[0], args[1]); // DCO. last usage
@@ -658,8 +865,45 @@ lm_node_t* _lm_substitute(lm_node_t* expr, long var_index, lm_node_t* value) {
             return expr; // DCO
     }
 }
+
+lm_bool _lm_can_be_cached(lm_node_t* node) {
+    if (!node) return 0;
+    
+    lm_node_tag_t tag = node->tag;
+    if (tag == LM_NODE_APPLICATION) return 1;
+
+#ifdef LMACHINE_STRICT 
+    if (tag == LM_NODE_STRICT_APPLICATION) return 1;
+#endif
+
+    if (tag == LM_NODE_PRIMITIVE) {
+#ifdef LMACHINE_STDIO
+        if (node->as.primitive.opcode == LM_NODE_PRIMITIVE_PRINT_CHAR ||
+            node->as.primitive.opcode == LM_NODE_PRIMITIVE_GET_CHAR) {
+            return 0;
+        }
+#endif
+        return 1;
+    }
+
+    return 0;
+}
+
 lm_node_t* lm_evaluate(lm_node_t* node) {
+    return lm_evaluate_cache(node, 0);
+}
+
+lm_node_t* lm_evaluate_cache(lm_node_t* node, lm_node_cache_t* cache) {
     if (!node) return NULL;
+    
+    if (cache && _lm_can_be_cached(node)) {
+        lm_node_t* maybe_cached = lm_try_get_cache(cache, lm_copy_node(node));
+        if (maybe_cached) {
+            lm_destroy_node(node);
+            return maybe_cached; // DCO
+        }
+        
+    }
     
     switch (node->tag) {
         case LM_NODE_ABSTRACTION: // Normal form
@@ -671,14 +915,14 @@ lm_node_t* lm_evaluate(lm_node_t* node) {
         case LM_NODE_STRICT_APPLICATION:
 #endif
         case LM_NODE_APPLICATION: {
-            lm_node_t* func = lm_evaluate(lm_copy_node(node->as.application.func));
+            lm_node_t* func = lm_evaluate_cache(lm_copy_node(node->as.application.func), cache);
             
             // if func its abstraction(new lambda) -> replace all variables in body with arg
             lm_node_t* arg;
             if (func->tag == LM_NODE_ABSTRACTION) {
 #ifdef LMACHIME_STRICT
                 if (node->tag == LM_NODE_STRICT_APPLICATION) {
-                    arg = lm_evaluate(lm_copy_node(node->as.application.arg));
+                    arg = lm_evaluate_cache(lm_copy_node(node->as.application.arg), cache);
                 } else
 #endif
                 if (node->as.application.arg->tag == LM_NODE_APPLICATION || node->as.application.arg->tag == LM_NODE_PRIMITIVE) { 
@@ -687,35 +931,39 @@ lm_node_t* lm_evaluate(lm_node_t* node) {
                     arg = lm_copy_node(node->as.application.arg);
                 }
 
-                lm_node_t* result = _lm_substitute(
+                lm_node_t* substituted = _lm_substitute(
                     lm_copy_node(func->as.abstraction.body),
                     func->as.abstraction.var_index,
                     arg // DCO. last usage
                 );
                 lm_destroy_node(func);
-                lm_destroy_node(node);
-
-                return lm_evaluate(result); // DCO
+                
+                lm_node_t* result = lm_evaluate_cache(substituted, cache); // DCO. last usage
+                (void)lm_try_cache(cache, node, lm_copy_node(result)); // DCO. last usage
+                
+                return result; // DCO
             }
             arg = lm_copy_node(node->as.application.arg);
             lm_node_t* new_node = lm_mk_app(func, arg); // DCO. new_node just take "ownership" over `func` and `arg`
-            lm_destroy_node(node);
+            (void)lm_try_cache(cache, node, lm_copy_node(new_node)); // DCO. last usage
             return new_node;
         }
             
         case LM_NODE_PRIMITIVE: {
-            return _lm_eval_primitive(node); // DCO
+            lm_node_t* result = _lm_eval_primitive(lm_copy_node(node), cache);; // DCO. last usage
+            (void)lm_try_cache(cache, node, lm_copy_node(result)); // DCO. last usage
+            return result; // DCO
         }
 
         case LM_NODE_THUNK: {
             lm_node_t* result;
             if (node->ref_count == 0) { // DONT TOUCH. `node->as.thunk.value` can NOT refer to `node`
-                result = lm_evaluate(lm_copy_node(node->as.thunk));
+                result = lm_evaluate_cache(lm_copy_node(node->as.thunk), cache);
                 lm_destroy_node(node);
                 *node = *result;
 
             } else { // thunks have access to context depended bindings
-                result = lm_evaluate(lm_copy_node(node->as.thunk));
+                result = lm_evaluate_cache(lm_copy_node(node->as.thunk), cache);
                 lm_destroy_node(node);
             }
 

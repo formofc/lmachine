@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stddef.h>
 #include <stdio.h>
 
 #define LMACHINE_IMPLEMENTATION
@@ -74,21 +75,49 @@ lm_node_t* lm_mk_fibonacci() {
     
     return fibonacci;
 }
-int main() {
-    lm_node_t* fib = lm_mk_fibonacci();
+int main(int argc, char** argv) {
+    bool cache_enabled = false;
+    size_t bytes, depth;
+    char* cache_data;
+
+    if (argc == 3) {
+        if (sscanf(argv[1], "%zu", &bytes) != 1) return 1;
+        if (sscanf(argv[2], "%zu", &depth) != 1) return 1;
+        cache_enabled = true;
+    }
     
-   for (int i = 0; i <= 20; ++i) {
-        lm_node_t* result = lm_evaluate(
+    cache_data = malloc(bytes);
+    if (!cache_data) return 1;
+
+    lm_node_t* fib = lm_mk_fibonacci();
+    lm_node_cache_t cache, *cache_handle = NULL;
+    if (cache_enabled && lm_init_node_cache(&cache, (void*)cache_data, bytes, depth)) {
+        cache_handle = &cache;
+    } else {
+        printf("Failed to initialize cache\n");
+    }
+
+
+    if (cache_handle) {
+        printf("With cache\n");
+    } else {
+        printf("Without cache\n");
+    }
+    
+    for (int i = 0; i <= 25; ++i) {
+        lm_node_t* result = lm_evaluate_cache(
             lm_mk_app(
                 lm_copy_node(fib),
                 lm_mk_value(i)
-            )
+            ),
+            cache_handle
         );
         
-        printf("Fib(%d) = %lld\n", i + 1, result->as.value);
+        printf("Fib(%d) = %lld\n", i, result->as.value);
         lm_destroy_node(result);
     }
     lm_destroy_node(fib);
+    lm_destroy_node_cache(cache_handle);
     printf("not freed: %ld\n", t); // 6
 
     return 0;
